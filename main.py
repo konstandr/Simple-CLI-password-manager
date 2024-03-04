@@ -54,12 +54,25 @@ class PasswordManager:
         pass
 
     def add_entry(self, name, password):
-        # TODO: Implement this method
-        pass
+        if self.current_user:
+            self.cursor.execute("INSERT INTO passwords (user_id, name, encrypted_password) VALUES (?, ?, ?)",
+                                (self.current_user, name, password))
+            self.conn.commit()
+
+
+
 
     def get_entry(self, name):
-        # TODO: Implement this method
-        pass
+        if self.current_user:
+            self.cursor.execute("SELECT encrypted_password FROM passwords WHERE user_id = ? AND name = ?",
+                                (self.current_user, name))
+            password = self.cursor.fetchone()
+            if password:
+                return password[0]
+            else:
+                print("Entry not found")
+        else:
+            print("Not logged in")
 
     def delete_entry(self, name):
         # TODO: Implement this method
