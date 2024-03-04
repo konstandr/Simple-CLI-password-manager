@@ -1,4 +1,6 @@
+import hashlib
 import sqlite3
+import bcrypt
 
 
 class PasswordManager:
@@ -17,20 +19,38 @@ class PasswordManager:
                                    FOREIGN KEY(user_id) REFERENCES users(id))''')
         self.conn.commit()
 
-    def _hash_password(self, password, salt):
-        # TODO: Implement this method
-        pass
+    def hash_password(self, password):
+        # use sha256 to hash the password with the salt
+        salt = bcrypt.gensalt()
+        print(salt)
+        hashed_password = bcrypt.hashpw(password.encode(), salt)
+        return hashed_password
 
     def register_user(self, username, master_password):
-        # TODO: Implement this method
-        pass
+        hashed_password = self.hash_password(master_password)
+        try:
+            self.cursor.execute("INSERT INTO users (username, hashed_password) VALUES (?, ?)",
+                                (username, hashed_password))
+            self.conn.commit()
+        except sqlite3.IntegrityError:
+            print("Username already exists.")
 
     def login(self, username, master_password):
-        # TODO: Implement this method
-        pass
+        self.cursor.execute("SELECT id, hashed_password FROM users WHERE username = ?", (username,))
+        user = self.cursor.fetchone()
+        if user:
+            user_id, hashed_password = user
+            if bcrypt.checkpw(master_password.encode(), hashed_password):
+                self.current_user = user_id
+                print("Login successful")
+            else:
+                print("Incorrect password")
+        else:
+            print("Username not found")
 
     def logout(self):
-        # TODO: Implement this method
+        self.current_user = None
+        print("Logged out")
         pass
 
     def add_entry(self, name, password):
@@ -61,10 +81,9 @@ class PasswordManager:
         self.conn.close()
 
 
-
 def main_loop(password_manager):
     while True:
-        print("Choose an option:")#
+        print("Choose an option:")  #
         print("1. Register user")
         print("2. Login")
         print("3. Logout")
@@ -107,7 +126,8 @@ def main_loop(password_manager):
             password_manager.close()
             break
 
+
 if __name__ == "__main__":
+
     password_manager = PasswordManager()
     main_loop(password_manager)
-
