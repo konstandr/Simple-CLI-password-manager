@@ -75,19 +75,34 @@ class PasswordManager:
             print("Not logged in")
 
     def delete_entry(self, name):
-        # TODO: Implement this method
+        if self.current_user:
+            self.cursor.execute("DELETE FROM passwords WHERE user_id = ? AND name = ?", (self.current_user, name))
+            self.conn.commit()
         pass
 
     def list_entries(self):
-        # TODO: Implement this method
+        if self.current_user:
+            self.cursor.execute("SELECT name FROM passwords WHERE user_id = ?", (self.current_user,))
+            entries = self.cursor.fetchall()
+            for entry in entries:
+                print(entry[0])
+        else:
+            print("Not logged in")
         pass
 
     def change_master_password(self, new_master_password):
-        # TODO: Implement this method
+        if self.current_user:
+            hashed_password = self.hash_password(new_master_password)
+            self.cursor.execute("UPDATE users SET hashed_password = ? WHERE id = ?", (hashed_password, self.current_user))
+            self.conn.commit()
         pass
 
     def delete_user(self):
-        # TODO: Implement this method
+        if self.current_user:
+            self.cursor.execute("DELETE FROM passwords WHERE user_id = ?", (self.current_user,))
+            self.cursor.execute("DELETE FROM users WHERE id = ?", (self.current_user,))
+            self.conn.commit()
+            self.current_user = None
         pass
 
     def close(self):
