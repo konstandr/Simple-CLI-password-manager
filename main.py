@@ -76,13 +76,14 @@ class PasswordManager:
         if bcrypt.checkpw(master_password.encode(), hashed_master_password.encode()):
             print("Master password correct.")
             # Κρυπτογράφηση του password
-            cipher_suite = Fernet(self.get_user_key(master_password.encode()))
-            encrypted_password = cipher_suite.encrypt(password.encode())
+            # Den exei ginei akoma h kruptografisi
+            # Tha ginei se sxesh me ton master password tou xristi
+            encrypted_password = "test"
 
             # Προσθήκη του entry στον πίνακα passwords
             self.cursor.execute("INSERT INTO passwords (user_id, service_name, username, encrypted_password) VALUES (?, ?, ?, ?)",
                                 (self.current_user, service_name, username, encrypted_password))
-            self.connection.commit()
+            self.conn.commit()
             print("Entry added successfully.")
         else:
             print("Incorrect master password.")
