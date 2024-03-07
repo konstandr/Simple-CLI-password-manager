@@ -1,30 +1,37 @@
 import hashlib
+import os
 import sqlite3
 import bcrypt
+from cryptography.fernet import Fernet
 
 
 class PasswordManager:
-    def __init__(self):
-        self.conn = sqlite3.connect(':memory:')
-        self.cursor = self.conn.cursor()
-        self._create_tables()
+    def __init__(self, db_file='pass'):
+        self.db_file = db_file  # Store the filename
+        if not os.path.isfile(self.db_file):  # Check if file exists
+            self.conn = sqlite3.connect(self.db_file)
+            self.cursor = self.conn.cursor()
+            self.create_tables()
+        else:
+            self.conn = sqlite3.connect(self.db_file)
+            self.cursor = self.conn.cursor()
         self.current_user = None
         self.cipher_suite = None
+        self.user_id = None
 
-    def _create_tables(self):
-        self.cursor.execute('''CREATE TABLE users
-                                   (id INTEGER PRIMARY KEY, username TEXT UNIQUE, hashed_password TEXT, salt TEXT)''')
-        self.cursor.execute('''CREATE TABLE passwords
-                                   (id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, encrypted_password BLOB,
+    def create_tables(self):
+        self.cursor.execute('''CREATE TABLE IF NOT EXISTS users
+                                   (id INTEGER PRIMARY KEY, username TEXT UNIQUE, hashed_password TEXT)''')
+        self.cursor.execute('''CREATE TABLE IF NOT EXISTS passwords
+                                   (id INTEGER PRIMARY KEY, user_id INTEGER, service_name TEXT, username TEXT, encrypted_password BLOB,
                                    FOREIGN KEY(user_id) REFERENCES users(id))''')
+
         self.conn.commit()
 
     def hash_password(self, password):
-        # use sha256 to hash the password with the salt
         salt = bcrypt.gensalt()
-        print(salt)
         hashed_password = bcrypt.hashpw(password.encode(), salt)
-        return hashed_password
+        return hashed_password.decode()  # Store as string
 
     def register_user(self, username, master_password):
         hashed_password = self.hash_password(master_password)
@@ -39,10 +46,12 @@ class PasswordManager:
         self.cursor.execute("SELECT id, hashed_password FROM users WHERE username = ?", (username,))
         user = self.cursor.fetchone()
         if user:
-            user_id, hashed_password = user
-            if bcrypt.checkpw(master_password.encode(), hashed_password):
-                self.current_user = user_id
+            self.user_id, hashed_password = user
+
+            if bcrypt.checkpw(master_password.encode(), hashed_password.encode()):
+                self.current_user = self.user_id
                 print("Login successful")
+                return True
             else:
                 print("Incorrect password")
         else:
@@ -50,29 +59,38 @@ class PasswordManager:
 
     def logout(self):
         self.current_user = None
+        self.cipher_suite = None
         print("Logged out")
-        pass
 
-    def add_entry(self, name, password):
-        if self.current_user:
-            self.cursor.execute("INSERT INTO passwords (user_id, name, encrypted_password) VALUES (?, ?, ?)",
-                                (self.current_user, name, password))
-            self.conn.commit()
+    def add_entry(self, service_name, username, password):
+        if not self.current_user:
+            print("User not connected. Please log in.")
+            return
 
+        master_password = password
 
+        # Επιβεβαιώστε τον master κωδικό
+        self.cursor.execute("SELECT hashed_password FROM users WHERE id = ?", (self.current_user,))
+        hashed_master_password = self.cursor.fetchone()[0]
+
+        if bcrypt.checkpw(master_password.encode(), hashed_master_password.encode()):
+            print("Master password correct.")
+            # Κρυπτογράφηση του password
+            cipher_suite = Fernet(self.get_user_key(master_password.encode()))
+            encrypted_password = cipher_suite.encrypt(password.encode())
+
+            # Προσθήκη του entry στον πίνακα passwords
+            self.cursor.execute("INSERT INTO passwords (user_id, service_name, username, encrypted_password) VALUES (?, ?, ?, ?)",
+                                (self.current_user, service_name, username, encrypted_password))
+            self.connection.commit()
+            print("Entry added successfully.")
+        else:
+            print("Incorrect master password.")
 
 
     def get_entry(self, name):
         if self.current_user:
-            self.cursor.execute("SELECT encrypted_password FROM passwords WHERE user_id = ? AND name = ?",
-                                (self.current_user, name))
-            password = self.cursor.fetchone()
-            if password:
-                return password[0]
-            else:
-                print("Entry not found")
-        else:
-            print("Not logged in")
+            pass
 
     def delete_entry(self, name):
         if self.current_user:
@@ -93,7 +111,8 @@ class PasswordManager:
     def change_master_password(self, new_master_password):
         if self.current_user:
             hashed_password = self.hash_password(new_master_password)
-            self.cursor.execute("UPDATE users SET hashed_password = ? WHERE id = ?", (hashed_password, self.current_user))
+            self.cursor.execute("UPDATE users SET hashed_password = ? WHERE id = ?",
+                                (hashed_password, self.current_user))
             self.conn.commit()
         pass
 
@@ -107,6 +126,9 @@ class PasswordManager:
 
     def close(self):
         self.conn.close()
+
+    def get_user_key(self, master_password):
+        return master_password
 
 
 def main_loop(password_manager):
@@ -136,7 +158,8 @@ def main_loop(password_manager):
         elif command == "4":
             name = input("Name: ")
             password = input("Password: ")
-            password_manager.add_entry(name, password)
+            service_name = input("Service name: ")
+            password_manager.add_entry(service_name, name, password)
         elif command == "5":
             name = input("Name: ")
             print("Password:", password_manager.get_entry(name))
@@ -156,6 +179,5 @@ def main_loop(password_manager):
 
 
 if __name__ == "__main__":
-
     password_manager = PasswordManager()
     main_loop(password_manager)
