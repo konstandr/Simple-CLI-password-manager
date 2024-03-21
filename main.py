@@ -95,7 +95,7 @@ class PasswordManager:
         else:
             print("Incorrect master password.")
 
-    def get_entry(self, service_name):
+    def get_entry(self):
         if not self.current_user:
             print("User not connected. Please log in.")
             return
@@ -107,12 +107,19 @@ class PasswordManager:
         hashed_master_password = self.cursor.fetchone()[0]
 
         if bcrypt.checkpw(master_password.encode(), hashed_master_password.encode()):
-
             print("Master password correct.")
+
+            self.cursor.execute("SELECT service_name FROM passwords WHERE user_id = ?", (self.current_user,))
+            service_names = self.cursor.fetchone()[0]
+
+            print("You have the following services:", service_names)
+
+            service_name = input("Enter the service name: ")
 
             # Generate a key from the master password
             key = hashlib.sha256(master_password.encode()).digest()
-            cipher_suite = Fernet(key)
+            fernet_key = base64.urlsafe_b64encode(key)
+            cipher_suite = Fernet(fernet_key)
 
             # Retrieve the encrypted password from the database
             self.cursor.execute("SELECT encrypted_password FROM passwords WHERE user_id = ? AND service_name = ?",
@@ -127,7 +134,6 @@ class PasswordManager:
                 print("Entry not found.")
         else:
             print("Incorrect master password.")
-
 
     def delete_entry(self, name):
         if self.current_user:
@@ -173,14 +179,6 @@ def main_loop(password_manager):
         print("Choose an option:")  #
         print("1. Register user")
         print("2. Login")
-        print("3. Logout")
-        print("4. Add entry")
-        print("5. Get entries")
-        print("6. Delete entries")
-        print("7. List entries")
-        print("8. Change master password")
-        print("9. Delete user")
-        print("10. Quit")
         command = input("Enter command: ")
         if command == "1":
             username = input("Username: ")
@@ -190,28 +188,40 @@ def main_loop(password_manager):
             username = input("Username: ")
             master_password = input("Master password: ")
             password_manager.login(username, master_password)
-        elif command == "3":
-            password_manager.logout()
-        elif command == "4":
+        if password_manager.current_user:
+            logged_in_menu(password_manager)
+
+
+def logged_in_menu(password_manager):
+    while True:
+        print("Choose an option:")
+        print("1. Add entry")
+        print("2. Get entries")
+        print("3. Delete entries")
+        print("4. List entries")
+        print("5. Change master password")
+        print("6. Delete user")
+        print("7. Logout")
+        command = input("Enter command: ")
+        if command == "1":
             name = input("Name: ")
             password = input("Password: ")
             service_name = input("Service name: ")
             password_manager.add_entry(service_name, name, password)
-        elif command == "5":
-            name = input("Name: ")
-            print("Password:", password_manager.get_entry(name))
-        elif command == "6":
+        elif command == "2":
+            print("Password:", password_manager.get_entry())
+        elif command == "3":
             name = input("Name: ")
             password_manager.delete_entry(name)
-        elif command == "7":
+        elif command == "4":
             password_manager.list_entries()
-        elif command == "8":
+        elif command == "5":
             new_master_password = input("New master password: ")
             password_manager.change_master_password(new_master_password)
-        elif command == "9":
+        elif command == "6":
             password_manager.delete_user()
-        elif command == "10":
-            password_manager.close()
+        elif command == "7":
+            password_manager.logout()
             break
 
 
