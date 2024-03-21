@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import os
 import sqlite3
@@ -67,31 +68,66 @@ class PasswordManager:
             print("User not connected. Please log in.")
             return
 
-        master_password = password
+        master_password = input("Enter your master password: ")  # Prompt user to enter master password again
 
-        # Επιβεβαιώστε τον master κωδικό
+        # Verify the master password
         self.cursor.execute("SELECT hashed_password FROM users WHERE id = ?", (self.current_user,))
         hashed_master_password = self.cursor.fetchone()[0]
 
         if bcrypt.checkpw(master_password.encode(), hashed_master_password.encode()):
-            print("Master password correct.")
-            # Κρυπτογράφηση του password
-            # Den exei ginei akoma h kruptografisi
-            # Tha ginei se sxesh me ton master password tou xristi
-            encrypted_password = "test"
 
-            # Προσθήκη του entry στον πίνακα passwords
-            self.cursor.execute("INSERT INTO passwords (user_id, service_name, username, encrypted_password) VALUES (?, ?, ?, ?)",
-                                (self.current_user, service_name, username, encrypted_password))
+            print("Master password correct.")
+
+            # Generate a key from the master password
+            key = hashlib.sha256(master_password.encode()).digest()
+            fernet_key = base64.urlsafe_b64encode(key)
+            cipher_suite = Fernet(fernet_key)
+
+            # Encrypt the password
+            encrypted_password = cipher_suite.encrypt(password.encode())
+
+            # Add the entry to the database
+            self.cursor.execute(
+                "INSERT INTO passwords (user_id, service_name, username, encrypted_password) VALUES (?, ?, ?, ?)",
+                (self.current_user, service_name, username, encrypted_password))
             self.conn.commit()
             print("Entry added successfully.")
         else:
             print("Incorrect master password.")
 
+    def get_entry(self, service_name):
+        if not self.current_user:
+            print("User not connected. Please log in.")
+            return
 
-    def get_entry(self, name):
-        if self.current_user:
-            pass
+        master_password = input("Enter your master password: ")  # Prompt user to enter master password again
+
+        # Verify the master password
+        self.cursor.execute("SELECT hashed_password FROM users WHERE id = ?", (self.current_user,))
+        hashed_master_password = self.cursor.fetchone()[0]
+
+        if bcrypt.checkpw(master_password.encode(), hashed_master_password.encode()):
+
+            print("Master password correct.")
+
+            # Generate a key from the master password
+            key = hashlib.sha256(master_password.encode()).digest()
+            cipher_suite = Fernet(key)
+
+            # Retrieve the encrypted password from the database
+            self.cursor.execute("SELECT encrypted_password FROM passwords WHERE user_id = ? AND service_name = ?",
+                                (self.current_user, service_name))
+            encrypted_password = self.cursor.fetchone()
+
+            if encrypted_password:
+                # Decrypt the password
+                decrypted_password = cipher_suite.decrypt(encrypted_password[0]).decode()
+                return decrypted_password
+            else:
+                print("Entry not found.")
+        else:
+            print("Incorrect master password.")
+
 
     def delete_entry(self, name):
         if self.current_user:
