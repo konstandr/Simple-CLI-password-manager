@@ -1,15 +1,17 @@
-import base64
-import hashlib
-import os
 import sqlite3
 import bcrypt
+import hashlib
+import os
+import base64
+import secrets
 from cryptography.fernet import Fernet
 
 
 class PasswordManager:
     def __init__(self, db_file='pass'):
-        self.db_file = db_file  # Store the filename
-        if not os.path.isfile(self.db_file):  # Check if file exists
+        self.usernameSecret = None
+        self.db_file = db_file
+        if not os.path.isfile(self.db_file):
             self.conn = sqlite3.connect(self.db_file)
             self.cursor = self.conn.cursor()
             self.create_tables()
@@ -22,35 +24,66 @@ class PasswordManager:
 
     def create_tables(self):
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS users
-                                   (id INTEGER PRIMARY KEY, username TEXT UNIQUE, hashed_password TEXT)''')
+                                   (id INTEGER PRIMARY KEY, username TEXT UNIQUE, hashed_password TEXT,
+                                    salt TEXT, encryption_key TEXT)''')
         self.cursor.execute('''CREATE TABLE IF NOT EXISTS passwords
-                                   (id INTEGER PRIMARY KEY, user_id INTEGER, service_name TEXT, username TEXT, encrypted_password BLOB,
+                                   (id INTEGER PRIMARY KEY, user_id INTEGER, service_name TEXT, username TEXT,
+                                    encrypted_password BLOB,
                                    FOREIGN KEY(user_id) REFERENCES users(id))''')
 
         self.conn.commit()
 
-    def hash_password(self, password):
-        salt = bcrypt.gensalt()
-        hashed_password = bcrypt.hashpw(password.encode(), salt)
-        return hashed_password.decode()  # Store as string
+    def hash_password(self, password, salt, secret):
+        # Generate the hash using PBKDF2 with 100,000 iterations
+        hashed_password = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), secret.encode(), 100000)
+        return hashed_password.hex()
 
     def register_user(self, username, master_password):
-        hashed_password = self.hash_password(master_password)
+        # Generate a random salt
+        salt = secrets.token_hex(16)  # Generate a 16-byte (32-character) random salt
+        self.usernameSecret = secrets.token_urlsafe(32)  # Generate a URL-safe secret key
+        # Hash the master password with salt
+        hashed_password = self.hash_password(master_password, salt, )
+
+        # Generate encryption key from master password
+        encryption_key = self.generate_encryption_key(master_password)
+
         try:
-            self.cursor.execute("INSERT INTO users (username, hashed_password) VALUES (?, ?)",
-                                (username, hashed_password))
+            self.cursor.execute(
+                "INSERT INTO users (username, hashed_password, salt, encryption_key) VALUES (?, ?, ?, ?)",
+                (username, hashed_password, salt, encryption_key))
             self.conn.commit()
+            print("User registered successfully.")
         except sqlite3.IntegrityError:
             print("Username already exists.")
 
+    def generate_secret_key(self):
+        self.usernameSecret = secrets.token_urlsafe(32)  # Generate a URL-safe secret key
+        print("Secret key generated successfully.")
+
+        # Store the secret key in a file
+        file_path = "secret_key.txt"
+        with open(file_path, "w") as file:
+            file.write(self.usernameSecret)
+
+        print(f"Secret key stored in file: {file_path}")
+
+
+    def generate_encryption_key(self, master_password):
+        key = hashlib.sha256(master_password.encode()).digest()
+        return base64.urlsafe_b64encode(key).decode()
+
     def login(self, username, master_password):
-        self.cursor.execute("SELECT id, hashed_password FROM users WHERE username = ?", (username,))
+        self.cursor.execute("SELECT id, hashed_password, salt, encryption_key FROM users WHERE username = ?",
+                            (username,))
         user = self.cursor.fetchone()
         if user:
-            self.user_id, hashed_password = user
+            self.user_id, hashed_password, salt, encryption_key = user
 
-            if bcrypt.checkpw(master_password.encode(), hashed_password.encode()):
+            # Hash the entered password with the stored salt and check against the stored hashed password
+            if self.hash_password(master_password, salt) == hashed_password:
                 self.current_user = self.user_id
+                self.cipher_suite = Fernet(encryption_key.encode())
                 print("Login successful")
                 return True
             else:
@@ -71,19 +104,17 @@ class PasswordManager:
         master_password = input("Enter your master password: ")  # Prompt user to enter master password again
 
         # Verify the master password
-        self.cursor.execute("SELECT hashed_password FROM users WHERE id = ?", (self.current_user,))
-        hashed_master_password = self.cursor.fetchone()[0]
+        self.cursor.execute("SELECT hashed_password, salt, encryption_key FROM users WHERE id = ?",
+                            (self.current_user,))
+        hashed_master_password, salt, encryption_key = self.cursor.fetchone()
 
-        if bcrypt.checkpw(master_password.encode(), hashed_master_password.encode()):
-
+        if self.hash_password(master_password, salt) == hashed_master_password:
             print("Master password correct.")
 
-            # Generate a key from the master password
-            key = hashlib.sha256(master_password.encode()).digest()
-            fernet_key = base64.urlsafe_b64encode(key)
-            cipher_suite = Fernet(fernet_key)
+            # Initialize Fernet cipher suite with the encryption key
+            cipher_suite = Fernet(encryption_key.encode())
 
-            # Encrypt the password
+            # Encrypt the password using the cipher suite
             encrypted_password = cipher_suite.encrypt(password.encode())
 
             # Add the entry to the database
@@ -103,35 +134,29 @@ class PasswordManager:
         master_password = input("Enter your master password: ")  # Prompt user to enter master password again
 
         # Verify the master password
-        self.cursor.execute("SELECT hashed_password FROM users WHERE id = ?", (self.current_user,))
-        hashed_master_password = self.cursor.fetchone()[0]
+        self.cursor.execute("SELECT hashed_password, salt, encryption_key FROM users WHERE id = ?",
+                            (self.current_user,))
+        hashed_master_password, salt, encryption_key = self.cursor.fetchone()
 
-        if bcrypt.checkpw(master_password.encode(), hashed_master_password.encode()):
+        if self.hash_password(master_password, salt) == hashed_master_password:
             print("Master password correct.")
 
-            self.cursor.execute("SELECT service_name FROM passwords WHERE user_id = ?", (self.current_user,))
-            service_names = self.cursor.fetchone()[0]
+            self.cursor.execute("SELECT service_name, encrypted_password FROM passwords WHERE user_id = ?",
+                                (self.current_user,))
+            entries = self.cursor.fetchall()
 
-            print("You have the following services:", service_names)
+            print("You have the following services:")
+            for entry in entries:
+                service_name, encrypted_password = entry
 
-            service_name = input("Enter the service name: ")
+                # Initialize Fernet cipher suite with the encryption key
+                cipher_suite = Fernet(encryption_key.encode())
 
-            # Generate a key from the master password
-            key = hashlib.sha256(master_password.encode()).digest()
-            fernet_key = base64.urlsafe_b64encode(key)
-            cipher_suite = Fernet(fernet_key)
+                # Decrypt the password using the cipher suite
+                decrypted_password = cipher_suite.decrypt(encrypted_password).decode()
 
-            # Retrieve the encrypted password from the database
-            self.cursor.execute("SELECT encrypted_password FROM passwords WHERE user_id = ? AND service_name = ?",
-                                (self.current_user, service_name))
-            encrypted_password = self.cursor.fetchone()
-
-            if encrypted_password:
-                # Decrypt the password
-                decrypted_password = cipher_suite.decrypt(encrypted_password[0]).decode()
-                return decrypted_password
-            else:
-                print("Entry not found.")
+                print("Service:", service_name)
+                print("Password:", decrypted_password)
         else:
             print("Incorrect master password.")
 
@@ -143,21 +168,23 @@ class PasswordManager:
 
     def list_entries(self):
         if self.current_user:
-            self.cursor.execute("SELECT name FROM passwords WHERE user_id = ?", (self.current_user,))
+            self.cursor.execute("SELECT service_name FROM passwords WHERE user_id = ?", (self.current_user,))
             entries = self.cursor.fetchall()
             for entry in entries:
                 print(entry[0])
         else:
             print("Not logged in")
-        pass
 
     def change_master_password(self, new_master_password):
         if self.current_user:
-            hashed_password = self.hash_password(new_master_password)
-            self.cursor.execute("UPDATE users SET hashed_password = ? WHERE id = ?",
-                                (hashed_password, self.current_user))
+            salt = secrets.token_hex(16)  # Generate a new random salt
+            hashed_password = self.hash_password(new_master_password, salt)
+            encryption_key = self.generate_encryption_key(new_master_password)
+            self.cursor.execute("UPDATE users SET hashed_password = ?, salt = ?, encryption_key = ? WHERE id = ?",
+                                (hashed_password, salt, encryption_key, self.current_user))
             self.conn.commit()
-        pass
+        else:
+            print("Not logged in")
 
     def delete_user(self):
         if self.current_user:
@@ -165,13 +192,12 @@ class PasswordManager:
             self.cursor.execute("DELETE FROM users WHERE id = ?", (self.current_user,))
             self.conn.commit()
             self.current_user = None
-        pass
+            self.cipher_suite = None
+        else:
+            print("Not logged in")
 
     def close(self):
         self.conn.close()
-
-    def get_user_key(self, master_password):
-        return master_password
 
 
 def main_loop(password_manager):
